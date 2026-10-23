@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global helper primitives
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Health check test connection document
+    match /test/connection {
+      allow get, list: if true;
+    }
+
+    // 1. Children Collection
+    match /children/{childId} {
+      function isValidChild(data) {
+        return data.id is string && data.id.size() <= 128
+          && data.name is string && data.name.size() > 0 && data.name.size() <= 150
+          && (data.gender == 'male' || data.gender == 'female')
+          && data.birthDate is string && data.birthDate.size() <= 30;
+      }
+
+      allow get: if isValidId(childId);
+      allow list: if true;
+      allow create, update: if isValidId(childId) && isValidChild(incoming());
+      allow delete: if isValidId(childId);
+    }
+
+    // 2. Growth Records Collection
+    match /growthRecords/{recordId} {
+      function isValidGrowth(data) {
+        return data.id is string && data.id.size() <= 128
+          && data.childId is string && data.childId.size() <= 128
+          && data.date is string && data.date.size() <= 30
+          && data.ageMonths is number && data.ageMonths >= 0 && data.ageMonths <= 120
+          && data.weight is number && data.weight > 0 && data.weight <= 150
+          && data.height is number && data.height > 0 && data.height <= 250;
+      }
+
+      allow get: if isValidId(recordId);
+      allow list: if true;
+      allow create, update: if isValidId(recordId) && isValidGrowth(incoming());
+      allow delete: if isValidId(recordId);
+    }
+
+    // 3. Vaccine Logs Collection
+    match /vaccineLogs/{logId} {
+      function isValidVaccine(data) {
+        return data.id is string && data.id.size() <= 128
+          && data.childId is string && data.childId.size() <= 128
+          && data.vaccineId is string && data.vaccineId.size() <= 128
+          && (data.status == 'given' || data.status == 'scheduled' || data.status == 'missed');
+      }
+
+      allow get: if isValidId(logId);
+      allow list: if true;
+      allow create, update: if isValidId(logId) && isValidVaccine(incoming());
+      allow delete: if isValidId(logId);
+    }
+
+    // 4. Memories Collection
+    match /memories/{memoryId} {
+      function isValidMemory(data) {
+        return data.id is string && data.id.size() <= 128
+          && data.childId is string && data.childId.size() <= 128
+          && data.title is string && data.title.size() <= 200
+          && data.mediaUrl is string && data.mediaUrl.size() <= 2000
+          && (data.mediaType == 'image' || data.mediaType == 'video');
+      }
+
+      allow get: if isValidId(memoryId);
+      allow list: if true;
+      allow create, update: if isValidId(memoryId) && isValidMemory(incoming());
+      allow delete: if isValidId(memoryId);
+    }
+  }
+}

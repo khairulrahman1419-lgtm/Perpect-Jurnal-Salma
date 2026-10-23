@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TumbuhKembang - Pantau Tumbuh Kembang Anak & KMS Digital</title>
+    <meta name="description" content="Aplikasi pemantauan tumbuh kembang anak terpadu berbasis standar WHO dan Kemenkes RI. Dilengkapi kurva KMS digital, skrining KPSP, jadwal imunisasi IDAI, panduan nutrisi MPASI, dan asisten dokter anak AI." />
+    <meta property="og:title" content="TumbuhKembang - Pantau Tumbuh Kembang Anak & KMS Digital" />
+    <meta property="og:description" content="Aplikasi pemantauan tumbuh kembang anak terpadu berbasis standar WHO dan Kemenkes RI. Dilengkapi kurva KMS digital, skrining KPSP, jadwal imunisasi IDAI, dan konsultasi AI." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0D9488" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="TumbuhAnak" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script>
+      // Gracefully handle Vite dev HMR websocket disconnects in AI Studio preview iframe
+      window.addEventListener('unhandledrejection', function (e) {
+        if (e && e.reason && (String(e.reason.message || e.reason).includes('WebSocket closed without opened') || String(e.reason).includes('WebSocket'))) {
+          e.preventDefault();
+        }
+      });
+      window.addEventListener('error', function (e) {
+        if (e && e.message && (e.message.includes('WebSocket closed without opened') || e.message.includes('WebSocket'))) {
+          e.preventDefault();
+        }
+      });
+      const _origErr = console.error;
+      console.error = function (...args) {
+        const str = args.map(function(a) { return (a && a.message) || String(a); }).join(' ');
+        if (str.includes('WebSocket closed without opened') || str.includes('[vite] failed to connect to websocket')) {
+          return;
+        }
+        _origErr.apply(console, args);
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

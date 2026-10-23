@@ -1,0 +1,93 @@
+{
+  "entities": {
+    "ChildProfile": {
+      "title": "ChildProfile",
+      "description": "Profil buah hati yang dipantau",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "gender": { "type": "string", "enum": ["male", "female"] },
+        "birthDate": { "type": "string" },
+        "birthWeight": { "type": "number" },
+        "birthHeight": { "type": "number" },
+        "birthHeadCircumference": { "type": "number" },
+        "parentName": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "gender", "birthDate"]
+    },
+    "GrowthRecord": {
+      "title": "GrowthRecord",
+      "description": "Catatan antropometri berkala (berat, tinggi, lingkar kepala)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "childId": { "type": "string" },
+        "date": { "type": "string" },
+        "ageMonths": { "type": "number" },
+        "weight": { "type": "number" },
+        "height": { "type": "number" },
+        "headCircumference": { "type": "number" },
+        "location": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "childId", "date", "ageMonths", "weight", "height"]
+    },
+    "VaccineLog": {
+      "title": "VaccineLog",
+      "description": "Catatan imunisasi anak sesuai rekomendasi IDAI",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "childId": { "type": "string" },
+        "vaccineId": { "type": "string" },
+        "status": { "type": "string", "enum": ["given", "scheduled", "missed"] },
+        "givenDate": { "type": "string" },
+        "location": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "childId", "vaccineId", "status"]
+    },
+    "ChildMemory": {
+      "title": "ChildMemory",
+      "description": "Foto dan video kenangan momen tumbuh kembang anak",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "childId": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "ageMonths": { "type": "number" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "storagePath": { "type": "string" },
+        "weightAtMoment": { "type": "number" },
+        "description": { "type": "string" },
+        "tags": { "type": "string" }
+      },
+      "required": ["id", "childId", "title", "mediaUrl", "mediaType"]
+    }
+  },
+  "firestore": {
+    "/children/{childId}": {
+      "schema": { "$ref": "ChildProfile" },
+      "description": "Dokumen profil anak"
+    },
+    "/growthRecords/{recordId}": {
+      "schema": { "$ref": "GrowthRecord" },
+      "description": "Riwayat antropometri berat dan tinggi badan"
+    },
+    "/vaccineLogs/{logId}": {
+      "schema": { "$ref": "VaccineLog" },
+      "description": "Riwayat status imunisasi anak"
+    },
+    "/memories/{memoryId}": {
+      "schema": { "$ref": "ChildMemory" },
+      "description": "Dokumen momen kenangan dan media anak"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Remix TumbuhKembang - Pantau Tumbuh Kembang Anak \u0026 KMS Digital",
+  "description": "Aplikasi komprehensif pemantauan tumbuh kembang anak berbasis standar WHO dan Kemenkes RI, dilengkapi kurva KMS interaktif, skrining KPSP, jadwal imunisasi IDAI, panduan MPASI bergizi, dan asisten konsultasi dokter anak AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
