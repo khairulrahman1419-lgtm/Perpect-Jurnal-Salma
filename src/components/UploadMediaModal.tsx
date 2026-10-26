@@ -13,11 +13,18 @@ import {
   Cloud,
   CheckCircle2,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
-import { getAccessToken, googleSignIn, googleSignOut, uploadMediaToGoogleDrive, auth } from '../services/googleDriveService';
-import { uploadMediaFile, saveOnlineMemory } from '../services/apiService';
-import { uploadMediaToStorage } from '../services/storageService';
+import {
+  getAccessToken,
+  googleSignIn,
+  googleSignOut,
+  uploadMediaToGoogleDrive,
+  auth,
+} from '../services/googleDriveService';
+import { saveOnlineMemory } from '../services/apiService';
 import { saveMemoryToFirestore } from '../services/firestoreService';
+import { compressImageFile } from '../utils/imageCompressor';
 import { ClothespinClip } from './ClothespinClip';
 
 interface UploadMediaModalProps {
@@ -53,7 +60,6 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
 
   // Google Drive state
   const [driveUser, setDriveUser] = useState(auth.currentUser);
-  const [saveToDrive, setSaveToDrive] = useState(true);
   const [isDriveConnecting, setIsDriveConnecting] = useState(false);
 
   // Live Camera state
@@ -103,7 +109,6 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
     try {
       await googleSignOut();
       setDriveUser(null);
-      setSaveToDrive(false);
     } catch (err) {
       console.warn('Gagal menonaktifkan akun:', err);
     }
@@ -178,47 +183,77 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
 
     setIsUploading(true);
     setUploadProgress(10);
-    setUploadStageText('Menyiapkan berkas...');
+    setUploadStageText('Menyiapkan media...');
     setErrorMessage(null);
 
     try {
       let finalMediaUrl = previewUrl || '';
       let driveFileId: string | undefined;
       let driveLink: string | undefined;
-      let storagePath: string | undefined;
 
-      // 1. Upload to Firebase Storage with automatic compression and fallback
-      if (selectedFile) {
-        setUploadStageText('Menyiapkan & mengompresi foto untuk Firebase Storage...');
-        const uploadResult = await uploadMediaToStorage(selectedFile, child.id, (pct, statusText) => {
-          setUploadProgress(Math.min(90, Math.max(10, pct)));
-          if (statusText) setUploadStageText(statusText);
-        });
-        finalMediaUrl = uploadResult.url;
-        storagePath = uploadResult.storagePath;
-      }
-
-      // 2. Sync to Google Drive if connected
-      if (saveToDrive && driveUser) {
-        setUploadStageText('Menyinkronkan salinan ke Google Drive...');
+      // 1. Get or request Google Drive access token
+      let token = await getAccessToken();
+      if (!token) {
+        setUploadStageText('Menghubungkan ke Google Drive...');
         try {
-          const token = await getAccessToken();
-          if (token) {
-            const fileName = `${title.replace(/\s+/g, '_') || 'Momen'}_${date}.${mediaType === 'video' ? 'mp4' : 'jpg'}`;
-            const mime = mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
-            const uploadRes = await uploadMediaToGoogleDrive(token, fileName, mime, finalMediaUrl, child.name);
-            if (uploadRes) {
-              driveFileId = uploadRes.fileId;
-              driveLink = uploadRes.webViewLink;
-            }
+          const authRes = await googleSignIn();
+          if (authRes) {
+            token = authRes.accessToken;
+            setDriveUser(authRes.user);
           }
-        } catch (driveErr: any) {
-          console.warn('Gagal sync ke Google Drive, file tetap aman di Firebase Storage:', driveErr);
+        } catch (signInErr: any) {
+          console.warn('Google sign in skipped or closed:', signInErr);
+          // If user closed popup, we can still save locally if preview exists
+          if (!previewUrl) {
+            throw new Error('Diperlukan izin Google Drive untuk menyimpan media. Silakan hubungkan akun Google Anda.');
+          }
         }
       }
 
-      setUploadProgress(95);
-      setUploadStageText('Menyimpan catatan momen ke Firebase Firestore...');
+      // 2. Upload directly to Google Drive as the primary storage
+      if (token && (selectedFile || previewUrl)) {
+        setUploadProgress(35);
+        setUploadStageText(
+          mediaType === 'video'
+            ? 'Mengunggah video ke folder Google Drive Anda...'
+            : 'Mengoptimalkan foto & mengunggah ke Google Drive...'
+        );
+
+        let fileToUpload: File | Blob | string = selectedFile || previewUrl!;
+        let mime = mediaType === 'video' ? (selectedFile?.type || 'video/mp4') : 'image/jpeg';
+        const fileExt = mediaType === 'video' ? 'mp4' : 'jpg';
+        const safeTitle = (title || 'Momen').replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const fileName = `${safeTitle}_${date}.${fileExt}`;
+
+        // If it's an image, apply gentle client-side compression to speed up upload
+        if (selectedFile && mediaType === 'image') {
+          try {
+            const compressed = await compressImageFile(selectedFile, 1920, 1920, 0.85);
+            fileToUpload = compressed.file;
+          } catch (compErr) {
+            console.warn('Kompresi gambar dilewati, mengunggah berkas asli:', compErr);
+          }
+        }
+
+        setUploadProgress(50);
+        const driveResult = await uploadMediaToGoogleDrive(
+          token,
+          fileName,
+          mime,
+          fileToUpload,
+          child.name,
+          (stage) => setUploadStageText(stage)
+        );
+
+        if (driveResult) {
+          driveFileId = driveResult.fileId;
+          driveLink = driveResult.webViewLink;
+          finalMediaUrl = driveResult.directUrl;
+        }
+      }
+
+      setUploadProgress(90);
+      setUploadStageText('Menyimpan data catatan ke database...');
 
       const memory: ChildMemory = {
         id: `mem_${Date.now()}`,
@@ -236,25 +271,24 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
         isPolaroidFavorite: true,
         driveFileId,
         driveLink,
-        storagePath,
       };
 
-      // Save to Firebase Firestore and local/server database
+      // Save to Firebase Firestore and local database
       try {
         await saveMemoryToFirestore(memory);
       } catch (fsErr) {
-        console.warn('Simpan ke Firestore warning, tetap simpan lokal/server:', fsErr);
+        console.warn('Simpan ke Firestore info:', fsErr);
       }
       await saveOnlineMemory(memory);
 
       setUploadProgress(100);
-      setUploadStageText('Berhasil disimpan!');
+      setUploadStageText('Berhasil disimpan ke Google Drive!');
       onSaveMemory(memory);
       stopLiveCamera();
       onClose();
     } catch (err: any) {
       console.error('Error submitting memory:', err);
-      setErrorMessage('Gagal mengunggah foto/video: ' + (err.message || 'Periksa jaringan Anda'));
+      setErrorMessage('Gagal mengunggah foto/video: ' + (err.message || 'Periksa jaringan Google Drive Anda'));
     } finally {
       setIsUploading(false);
     }
@@ -290,75 +324,60 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
           </button>
         </div>
 
-        {/* Real-time Cloud Storage Active Banner */}
-        <div className="mb-3 p-3 rounded-2xl bg-teal-50/90 border border-teal-200 flex items-center justify-between gap-2.5 text-xs">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
-              <CheckCircle2 className="w-4 h-4" />
+        {/* Dedicated Google Drive Storage Destination Card */}
+        <div className="mb-4 p-3.5 rounded-2xl border border-stone-200 bg-white shadow-xs">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-100">
+                <Cloud className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div className="truncate">
+                <div className="flex items-center gap-1.5">
+                  <p className="font-bold text-slate-900 truncate">Penyimpanan: Google Drive</p>
+                  {driveUser && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800">
+                      Aktif
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {driveUser
+                    ? `${driveUser.email} (Folder: TumbuhKembang - Jurnal Buah Hati)`
+                    : 'Foto & video akan disimpan langsung di Google Drive pribadi Anda'}
+                </p>
+              </div>
             </div>
-            <div className="truncate">
-              <p className="font-extrabold text-teal-950 truncate">Penyimpanan Cloud Online Real-Time</p>
-              <p className="text-[10px] text-teal-700 truncate">Foto & video otomatis disimpan online ke server</p>
-            </div>
-          </div>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-200 shrink-0">
-            Aktif 🟢
-          </span>
-        </div>
 
-        {/* Google Drive Status Bar (Optional Cloud Sync) */}
-        <div className="mb-4 p-3 rounded-2xl border border-stone-200 bg-white flex items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${driveUser ? 'bg-emerald-50 text-emerald-600' : 'bg-stone-100 text-stone-500'}`}>
-              <Cloud className="w-4 h-4" />
-            </div>
-            <div className="truncate">
-              <p className="font-bold text-slate-800 truncate">
-                {driveUser ? 'Google Drive Terhubung' : 'Google Drive Dinonaktifkan'}
-              </p>
-              <p className="text-[11px] text-slate-500 truncate">
-                {driveUser ? driveUser.email : 'Media langsung tersimpan aman di Cloud Server utama'}
-              </p>
-            </div>
-          </div>
-
-          {driveUser ? (
-            <div className="flex items-center gap-1.5 shrink-0">
-              <label className="flex items-center gap-1 cursor-pointer text-[11px] font-semibold text-teal-700 bg-teal-50 px-2 py-1 rounded-lg">
-                <input
-                  type="checkbox"
-                  checked={saveToDrive}
-                  onChange={(e) => setSaveToDrive(e.target.checked)}
-                  className="rounded text-teal-600 focus:ring-teal-500"
-                />
-                <span>Sync</span>
-              </label>
+            {driveUser ? (
               <button
                 type="button"
                 onClick={handleDisconnectDrive}
-                className="px-2 py-1 rounded-lg text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
-                title="Putuskan akun email ini"
+                className="px-2 py-1 rounded-lg text-[11px] font-semibold text-stone-500 hover:text-rose-600 hover:bg-stone-100 transition-colors cursor-pointer shrink-0"
+                title="Ganti akun Google"
               >
-                Putuskan
+                Ganti Akun
               </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={handleConnectDrive}
-              disabled={isDriveConnecting}
-              className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 border border-stone-200"
-            >
-              {isDriveConnecting ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Menghubungkan...</span>
-                </>
-              ) : (
-                <span>Hubungkan Akun Lain</span>
-              )}
-            </button>
-          )}
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnectDrive}
+                disabled={isDriveConnecting}
+                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
+              >
+                {isDriveConnecting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghubungkan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Cloud className="w-3.5 h-3.5 text-teal-300" />
+                    <span>Sambungkan Drive</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Upload Progress Bar if uploading */}
@@ -373,7 +392,7 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
             </div>
             <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-teal-400 h-2 rounded-full transition-all duration-200"
+                className="bg-teal-400 h-2 rounded-full transition-all duration-300"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -471,7 +490,10 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
                 )}
                 <button
                   type="button"
-                  onClick={() => setPreviewUrl(null)}
+                  onClick={() => {
+                    setPreviewUrl(null);
+                    setSelectedFile(null);
+                  }}
                   className="absolute bottom-3 right-3 bg-white/90 text-slate-700 hover:text-rose-600 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-stone-200 shadow-xs cursor-pointer"
                 >
                   Ganti Media
@@ -491,7 +513,7 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
                   Ambil Foto/Video atau Pilih dari Galeri
                 </h4>
                 <p className="text-xs text-slate-500 mt-1 mb-4">
-                  Dukung format foto & rekaman video langsung dari kamera ponsel Anda
+                  Dukung format foto & rekaman video langsung untuk disimpan ke Google Drive
                 </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -640,8 +662,17 @@ export const UploadMediaModal: React.FC<UploadMediaModalProps> = ({
               disabled={isUploading}
               className="px-5 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 disabled:bg-slate-500 rounded-xl transition-colors cursor-pointer shadow-xs inline-flex items-center gap-1.5"
             >
-              {isUploading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span>{isUploading ? `Mengunggah (${uploadProgress}%)...` : 'Simpan ke Album'}</span>
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>{`Mengunggah (${uploadProgress}%)...`}</span>
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-3.5 h-3.5 text-teal-300" />
+                  <span>Simpan ke Google Drive</span>
+                </>
+              )}
             </button>
           </div>
         </form>

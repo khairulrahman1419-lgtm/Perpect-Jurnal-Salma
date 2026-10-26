@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChildProfile, ChildMemory } from '../types';
-import { Camera, Image as ImageIcon, Video, Download, Sparkles, Filter, Plus, Heart, Share2, Play, Loader2, CheckCircle2 } from 'lucide-react';
+import { Camera, Image as ImageIcon, Video, Download, Sparkles, Filter, Plus, Heart, Share2, Play, Loader2, CheckCircle2, ExternalLink, Cloud } from 'lucide-react';
 import { ClothespinClip } from './ClothespinClip';
 import { downloadMediaFile } from '../utils/imageCompressor';
 
@@ -30,7 +30,7 @@ export const KolaseView: React.FC<KolaseViewProps> = ({
       const ext = mem.mediaType === 'video' ? 'mp4' : 'jpg';
       const cleanTitle = (mem.title || 'Momen').replace(/[^a-zA-Z0-9]/g, '_');
       const filename = `${child.name}_${cleanTitle}_${mem.date}.${ext}`;
-      await downloadMediaFile(mem.mediaUrl, filename);
+      await downloadMediaFile(mem.mediaUrl, filename, mem.driveFileId);
       setDownloadSuccessId(mem.id);
       setTimeout(() => setDownloadSuccessId(null), 2500);
     } catch (err) {
@@ -567,10 +567,13 @@ export const KolaseView: React.FC<KolaseViewProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    onDeleteMemory(selectedMemory.id);
-                    setSelectedMemory(null);
+                    const ok = window.confirm(`Apakah Anda yakin ingin menghapus kenangan "${selectedMemory.title}"?`);
+                    if (ok) {
+                      onDeleteMemory(selectedMemory.id);
+                      setSelectedMemory(null);
+                    }
                   }}
-                  className="text-stone-400 hover:text-rose-600 p-1.5 rounded-lg transition-colors text-xs"
+                  className="text-stone-400 hover:text-rose-600 p-1.5 rounded-lg transition-colors text-xs cursor-pointer"
                 >
                   Hapus
                 </button>
@@ -582,29 +585,45 @@ export const KolaseView: React.FC<KolaseViewProps> = ({
                 </p>
               )}
 
-              <div className="flex items-center justify-between pt-3 border-t border-stone-100">
-                <button
-                  onClick={() => handleDownloadMedia(selectedMemory)}
-                  disabled={downloadingId === selectedMemory.id}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition-colors cursor-pointer shadow-xs active:scale-95"
-                >
-                  {downloadingId === selectedMemory.id ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Mengunduh...</span>
-                    </>
-                  ) : downloadSuccessId === selectedMemory.id ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
-                      <span>Tersimpan di HP!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Unduh {selectedMemory.mediaType === 'video' ? 'Video' : 'Foto'}</span>
-                    </>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-stone-100">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDownloadMedia(selectedMemory)}
+                    disabled={downloadingId === selectedMemory.id}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition-colors cursor-pointer shadow-xs active:scale-95"
+                  >
+                    {downloadingId === selectedMemory.id ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Mengunduh...</span>
+                      </>
+                    ) : downloadSuccessId === selectedMemory.id ? (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                        <span>Tersimpan di HP!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh {selectedMemory.mediaType === 'video' ? 'Video' : 'Foto'}</span>
+                      </>
+                    )}
+                  </button>
+
+                  {(selectedMemory.driveLink || selectedMemory.driveFileId) && (
+                    <a
+                      href={selectedMemory.driveLink || `https://drive.google.com/file/d/${selectedMemory.driveFileId}/view`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-xs border border-amber-200 transition-colors"
+                      title="Lihat berkas asli di Google Drive"
+                    >
+                      <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Buka di Drive</span>
+                      <ExternalLink className="w-3 h-3 text-amber-700" />
+                    </a>
                   )}
-                </button>
+                </div>
 
                 <button
                   onClick={() => setSelectedMemory(null)}

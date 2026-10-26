@@ -89,12 +89,17 @@ export async function compressImageFile(
 /**
  * Downloads a media file directly to user device (mobile or desktop)
  */
-export async function downloadMediaFile(mediaUrl: string, fileName: string): Promise<boolean> {
+export async function downloadMediaFile(mediaUrl: string, fileName: string, driveFileId?: string): Promise<boolean> {
   try {
+    // If driveFileId is provided or mediaUrl has drive export link
+    const effectiveUrl = driveFileId 
+      ? `https://drive.google.com/uc?id=${driveFileId}&export=download`
+      : mediaUrl;
+
     // If it's a blob or data url or same-origin
-    if (mediaUrl.startsWith('data:') || mediaUrl.startsWith('blob:')) {
+    if (effectiveUrl.startsWith('data:') || effectiveUrl.startsWith('blob:')) {
       const a = document.createElement('a');
-      a.href = mediaUrl;
+      a.href = effectiveUrl;
       a.download = fileName;
       document.body.appendChild(a);
       a.click();
@@ -102,8 +107,21 @@ export async function downloadMediaFile(mediaUrl: string, fileName: string): Pro
       return true;
     }
 
+    // If it's a Google Drive link, we can trigger direct download anchor
+    if (driveFileId || effectiveUrl.includes('drive.google.com')) {
+      const a = document.createElement('a');
+      a.href = effectiveUrl;
+      a.download = fileName;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return true;
+    }
+
     // Try fetching the file as blob to force browser download dialog
-    const res = await fetch(mediaUrl, { mode: 'cors' });
+    const res = await fetch(effectiveUrl, { mode: 'cors' });
     if (!res.ok) throw new Error('Fetch failed');
     const blob = await res.blob();
     const objectUrl = window.URL.createObjectURL(blob);
@@ -120,7 +138,7 @@ export async function downloadMediaFile(mediaUrl: string, fileName: string): Pro
     console.warn('Direct blob download failed, attempting window fallback:', err);
     // Fallback: trigger link with download attribute or open
     const a = document.createElement('a');
-    a.href = mediaUrl;
+    a.href = driveFileId ? `https://drive.google.com/uc?id=${driveFileId}&export=download` : mediaUrl;
     a.download = fileName;
     a.target = '_blank';
     a.rel = 'noopener noreferrer';

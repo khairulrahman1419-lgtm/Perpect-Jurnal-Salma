@@ -9,6 +9,9 @@ import { auth, googleProvider as provider } from './firebase';
 
 export { auth };
 
+// Desired Google Drive scopes
+export const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
+
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
@@ -21,7 +24,6 @@ export const initAuth = (
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
-        // Try to re-authenticate or prompt login
         cachedAccessToken = null;
         if (onAuthFailure) onAuthFailure();
       }
@@ -32,6 +34,9 @@ export const initAuth = (
   });
 };
 
+/**
+ * Sign in with Google to grant Google Drive file access
+ */
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
@@ -47,11 +52,11 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     console.error('Google Sign in error:', error);
     let friendlyMessage = error.message || 'Gagal menghubungkan Google Drive';
     if (error.code === 'auth/popup-blocked') {
-      friendlyMessage = 'Jendela popup Google diblokir oleh peramban HP Anda. Izinkan pop-up di setelan peramban untuk menghubungkan Google Drive.';
+      friendlyMessage = 'Jendela login Google diblokir oleh peramban ponsel. Silakan izinkan pop-up di browser Anda.';
     } else if (error.code === 'auth/unauthorized-domain') {
-      friendlyMessage = 'Domain aplikasi ini belum terdaftar di Firebase Authorized Domains. Jangan khawatir, foto dan video Anda otomatis disimpan aman di Cloud Storage server kami!';
+      friendlyMessage = 'Domain aplikasi ini sedang proses otorisasi. Mohon coba beberapa saat lagi.';
     } else if (error.code === 'auth/popup-closed-by-user') {
-      friendlyMessage = 'Jendela login Google ditutup sebelum selesai.';
+      friendlyMessage = 'Jendela login Google ditutup sebelum otorisasi selesai.';
     }
     const err = new Error(friendlyMessage);
     (err as any).code = error.code;
@@ -75,14 +80,17 @@ export const googleSignOut = async () => {
  */
 export async function getOrCreateAppFolder(accessToken: string): Promise<string | null> {
   try {
-    // Search for existing folder
+    // Search for existing folder created by this app
     const q = "name = 'TumbuhKembang - Jurnal Buah Hati' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
     const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const data = await res.json();
-    if (data.files && data.files.length > 0) {
-      return data.files[0].id;
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.files && data.files.length > 0) {
+        return data.files[0].id;
+      }
     }
 
     // Create folder if not found
@@ -95,33 +103,54 @@ export async function getOrCreateAppFolder(accessToken: string): Promise<string 
       body: JSON.stringify({
         name: 'TumbuhKembang - Jurnal Buah Hati',
         mimeType: 'application/vnd.google-apps.folder',
+        description: 'Folder penyimpanan otomatis foto & video kenangan tumbuh kembang anak',
       }),
     });
-    const folderData = await createRes.json();
-    return folderData.id || null;
+
+    if (createRes.ok) {
+      const folderData = await createRes.json();
+      return folderData.id || null;
+    }
+    return null;
   } catch (err) {
-    console.error('Error finding/creating folder in Drive:', err);
+    console.warn('Notice when checking/creating Drive folder, will upload to root if needed:', err);
     return null;
   }
 }
 
+export interface DriveUploadResult {
+  fileId: string;
+  name: string;
+  webViewLink?: string;
+  webContentLink?: string;
+  directUrl: string;
+  downloadUrl: string;
+}
+
 /**
- * Uploads a base64 / blob media file directly to Google Drive
+ * Uploads a photo or video directly to Google Drive using multipart upload
  */
 export async function uploadMediaToGoogleDrive(
   accessToken: string,
   fileName: string,
   mimeType: string,
-  base64OrBlobUrl: string,
-  childName: string
-): Promise<{ fileId: string; webViewLink?: string } | null> {
+  fileOrBlobOrUrl: File | Blob | string,
+  childName: string,
+  onProgress?: (stage: string) => void
+): Promise<DriveUploadResult | null> {
   try {
+    onProgress?.('Mencari folder Google Drive...');
     const folderId = await getOrCreateAppFolder(accessToken);
 
-    // Convert base64 / data URL to binary blob
+    // Convert input to binary Blob
     let blob: Blob;
-    if (base64OrBlobUrl.startsWith('data:')) {
-      const parts = base64OrBlobUrl.split(';base64,');
+    let finalMimeType = mimeType;
+
+    if (fileOrBlobOrUrl instanceof Blob) {
+      blob = fileOrBlobOrUrl;
+      finalMimeType = fileOrBlobOrUrl.type || mimeType || 'application/octet-stream';
+    } else if (typeof fileOrBlobOrUrl === 'string' && fileOrBlobOrUrl.startsWith('data:')) {
+      const parts = fileOrBlobOrUrl.split(';base64,');
       const contentType = parts[0].split(':')[1];
       const raw = window.atob(parts[1]);
       const rawLength = raw.length;
@@ -130,15 +159,23 @@ export async function uploadMediaToGoogleDrive(
         uInt8Array[i] = raw.charCodeAt(i);
       }
       blob = new Blob([uInt8Array], { type: contentType });
-    } else {
-      const response = await fetch(base64OrBlobUrl);
+      finalMimeType = contentType;
+    } else if (typeof fileOrBlobOrUrl === 'string') {
+      const response = await fetch(fileOrBlobOrUrl);
       blob = await response.blob();
+      finalMimeType = blob.type || mimeType;
+    } else {
+      throw new Error('Format berkas tidak didukung');
     }
 
-    // Construct multipart upload body
+    onProgress?.('Mengunggah media ke Google Drive...');
+
+    // Prepare metadata
+    const sanitizedChildName = (childName || 'Anak').replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const safeFileName = `${sanitizedChildName}_${fileName}`;
     const metadata = {
-      name: `${childName}_${fileName}`,
-      mimeType: mimeType || blob.type || 'image/jpeg',
+      name: safeFileName,
+      mimeType: finalMimeType,
       parents: folderId ? [folderId] : undefined,
     };
 
@@ -150,7 +187,7 @@ export async function uploadMediaToGoogleDrive(
     form.append('file', blob);
 
     const uploadRes = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,thumbnailLink',
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink,thumbnailLink',
       {
         method: 'POST',
         headers: {
@@ -163,16 +200,67 @@ export async function uploadMediaToGoogleDrive(
     if (!uploadRes.ok) {
       const errBody = await uploadRes.text();
       console.error('Failed to upload to Google Drive:', errBody);
-      return null;
+      throw new Error(`Google Drive upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
     }
 
     const uploaded = await uploadRes.json();
+    const fileId = uploaded.id;
+
+    // Grant read permission to anyone with the link so thumbnail/download works smoothly
+    try {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role: 'reader',
+          type: 'anyone',
+        }),
+      });
+    } catch (permErr) {
+      console.warn('Could not set public permission on Drive file:', permErr);
+    }
+
+    // Direct image display URL via Google thumbnail service
+    const isImage = finalMimeType.startsWith('image/');
+    const directUrl = isImage
+      ? `https://lh3.googleusercontent.com/d/${fileId}=s1600`
+      : `https://drive.google.com/uc?id=${fileId}&export=download`;
+
+    const downloadUrl = `https://drive.google.com/uc?id=${fileId}&export=download`;
+    const webViewLink = uploaded.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
+
     return {
-      fileId: uploaded.id,
-      webViewLink: uploaded.webViewLink,
+      fileId,
+      name: uploaded.name || safeFileName,
+      webViewLink,
+      webContentLink: uploaded.webContentLink || downloadUrl,
+      directUrl,
+      downloadUrl,
     };
   } catch (err) {
     console.error('Error uploading media to Drive:', err);
-    return null;
+    throw err;
+  }
+}
+
+/**
+ * Delete a media file from Google Drive (Requires user confirmation prior to call)
+ */
+export async function deleteMediaFromGoogleDrive(
+  accessToken: string,
+  fileId: string
+): Promise<boolean> {
+  try {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    return res.ok;
+  } catch (err) {
+    console.error('Error deleting file from Drive:', err);
+    return false;
   }
 }
